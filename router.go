@@ -80,6 +80,8 @@ func Router(
 	r.Handle("/metrics", prometheusMonitoringHandler())
 	r.Get("/healthcheck.json", healthCheck.ServeHTTP)
 	r.Get("/api/ter/status", healthCheck.ServeTERStatus)
+	r.Get("/api/ter/cars", carsHandler.ServeTERCars)
+	r.Get("/api/ter/tracks", tracksHandler.ServeTERTracks)
 
 	if Debug {
 		r.Mount("/debug/", middleware.Profiler())

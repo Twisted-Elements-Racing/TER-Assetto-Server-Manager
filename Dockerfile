@@ -5,9 +5,43 @@ ENV DEBIAN_FRONTEND noninteractive
 ENV BUILD_DIR ${GOPATH}/src/github.com/JustaPenguin/assetto-server-manager
 ENV GO111MODULE on
 
-RUN curl -sL https://deb.nodesource.com/setup_12.x | bash -
-RUN apt-get update && apt-get install -y build-essential libssl-dev curl nodejs tofrodos dos2unix zip
+# Debian 10 Buster is archived.
+# Point the legacy v1.7.9 build environment at Debian's archive
+# so the original application can still be reproduced.
+RUN printf '%s\n' \
+    'deb http://archive.debian.org/debian buster main' \
+    'deb http://archive.debian.org/debian buster-updates main' \
+    'deb http://archive.debian.org/debian-security buster/updates main' \
+    > /etc/apt/sources.list \
+    && printf 'Acquire::Check-Valid-Until "false";\n' \
+    > /etc/apt/apt.conf.d/99archive
 
+RUN apt-get update \
+    && apt-get install -y \
+        build-essential \
+        libssl-dev \
+        curl \
+        tofrodos \
+        dos2unix \
+        zip \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG NODE_VERSION=12.22.12
+
+RUN curl -fsSLO \
+        https://nodejs.org/download/release/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz \
+    && echo \
+        "ff92a45c4d03e8e270bec1ab337b8fff6e9de293dabfe7e8936a41f2fb0b202e  node-v${NODE_VERSION}-linux-x64.tar.gz" \
+        | sha256sum -c - \
+    && tar -xzf \
+        node-v${NODE_VERSION}-linux-x64.tar.gz \
+        -C /usr/local \
+        --strip-components=1 \
+    && rm \
+        node-v${NODE_VERSION}-linux-x64.tar.gz \
+    && node --version \
+    && npm --version
+    
 ADD . ${BUILD_DIR}
 WORKDIR ${BUILD_DIR}
 RUN rm -rf cmd/server-manager/typescript/node_modules

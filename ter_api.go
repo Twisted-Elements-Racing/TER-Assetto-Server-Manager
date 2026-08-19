@@ -3,6 +3,7 @@ package servermanager
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 type TERStatusResponse struct {
@@ -14,6 +15,47 @@ type TERStatusResponse struct {
 	ServerName       string   `json:"serverName"`
 	ServerID         ServerID `json:"serverId"`
 	AssettoInstalled bool     `json:"assettoInstalled"`
+}
+
+type TERSession struct {
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	TimeMinutes int    `json:"timeMinutes"`
+	Laps        int    `json:"laps"`
+	WaitSeconds int    `json:"waitSeconds"`
+	IsOpen      int    `json:"isOpen"`
+}
+
+type TERCurrentEvent struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+
+	Track       string   `json:"track"`
+	TrackLayout string   `json:"trackLayout"`
+	Cars        []string `json:"cars"`
+
+	MaxClients       int `json:"maxClients"`
+	FuelRate         int `json:"fuelRate"`
+	DamageMultiplier int `json:"damageMultiplier"`
+	TyreWearRate     int `json:"tyreWearRate"`
+
+	ABSAllowed              int `json:"absAllowed"`
+	TractionControlAllowed  int `json:"tractionControlAllowed"`
+	StabilityControlAllowed int `json:"stabilityControlAllowed"`
+	AutoClutchAllowed       int `json:"autoClutchAllowed"`
+	TyreBlanketsAllowed     int `json:"tyreBlanketsAllowed"`
+
+	IsPractice     bool `json:"isPractice"`
+	IsTimeAttack   bool `json:"isTimeAttack"`
+	IsChampionship bool `json:"isChampionship"`
+	IsRaceWeekend  bool `json:"isRaceWeekend"`
+
+	Sessions []TERSession `json:"sessions"`
+}
+
+type TERCurrentEventResponse struct {
+	Running bool             `json:"running"`
+	Event   *TERCurrentEvent `json:"event,omitempty"`
 }
 
 type TERCar struct {
@@ -204,6 +246,135 @@ func (th *TracksHandler) ServeTERTracks(
 				IsDLC:   track.IsPaidDLC(),
 			},
 		)
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func splitACList(value string) []string {
+	parts := strings.Split(value, ";")
+
+	result := make(
+		[]string,
+		0,
+		len(parts),
+	)
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+
+		if part == "" {
+			continue
+		}
+
+		result = append(
+			result,
+			part,
+		)
+	}
+
+	return result
+}
+
+func (h *HealthCheck) ServeTERCurrentEvent(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	response := TERCurrentEventResponse{
+		Running: h.process.IsRunning(),
+	}
+
+	if response.Running {
+		event := h.process.Event()
+
+		if event != nil {
+			cfg := event.GetRaceConfig()
+
+			trackLayout := cfg.TrackLayout
+
+			if trackLayout == defaultLayoutName {
+				trackLayout = ""
+			}
+
+			sessions := make(
+				[]TERSession,
+				0,
+				len(cfg.Sessions),
+			)
+
+			sessionConfigs, sessionTypes :=
+				cfg.Sessions.AsSliceWithSessionTypes()
+
+			for index, session := range sessionConfigs {
+
+				sessionType :=
+					sessionTypes[index]
+
+				sessions = append(
+					sessions,
+					TERSession{
+						Type: sessionType.OriginalString(),
+
+						Name: session.Name,
+
+						TimeMinutes: session.Time,
+
+						Laps: session.Laps,
+
+						WaitSeconds: session.WaitTime,
+
+						IsOpen: int(session.IsOpen),
+					},
+				)
+			}
+
+			response.Event = &TERCurrentEvent{
+				Name: event.EventName(),
+
+				Description: event.EventDescription(),
+
+				Track: cfg.Track,
+
+				TrackLayout: trackLayout,
+
+				Cars: splitACList(cfg.Cars),
+
+				MaxClients: cfg.MaxClients,
+
+				FuelRate: cfg.FuelRate,
+
+				DamageMultiplier: cfg.DamageMultiplier,
+
+				TyreWearRate: cfg.TyreWearRate,
+
+				ABSAllowed: int(cfg.ABSAllowed),
+
+				TractionControlAllowed: int(
+					cfg.TractionControlAllowed,
+				),
+
+				StabilityControlAllowed: cfg.StabilityControlAllowed,
+
+				AutoClutchAllowed: cfg.AutoClutchAllowed,
+
+				TyreBlanketsAllowed: cfg.TyreBlanketsAllowed,
+
+				IsPractice: event.IsPractice(),
+
+				IsTimeAttack: event.IsTimeAttack(),
+
+				IsChampionship: event.IsChampionship(),
+
+				IsRaceWeekend: event.IsRaceWeekend(),
+
+				Sessions: sessions,
+			}
+		}
 	}
 
 	w.Header().Set(

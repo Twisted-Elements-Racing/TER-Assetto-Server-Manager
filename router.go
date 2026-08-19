@@ -82,6 +82,10 @@ func Router(
 	r.Get("/api/ter/status", healthCheck.ServeTERStatus)
 	r.Get("/api/ter/cars", carsHandler.ServeTERCars)
 	r.Get("/api/ter/tracks", tracksHandler.ServeTERTracks)
+	r.Get(
+		"/api/ter/current-event",
+		healthCheck.ServeTERCurrentEvent,
+	)
 
 	if Debug {
 		r.Mount("/debug/", middleware.Profiler())

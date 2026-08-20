@@ -101,6 +101,11 @@ func Router(
 			"/current-event",
 			healthCheck.ServeTERCurrentEvent,
 		)
+
+		r.Post(
+			"/stop",
+			serverAdministrationHandler.ServeTERStop,
+		)
 	})
 
 	if Debug {

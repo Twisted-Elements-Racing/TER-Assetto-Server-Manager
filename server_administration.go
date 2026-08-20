@@ -354,13 +354,7 @@ func (sah *ServerAdministrationHandler) serverProcess(w http.ResponseWriter, r *
 
 	switch chi.URLParam(r, "action") {
 	case "stop":
-		if event.IsChampionship() && !event.IsPractice() {
-			err = sah.championshipManager.StopActiveEvent()
-		} else if event.IsRaceWeekend() && !event.IsPractice() {
-			err = sah.raceWeekendManager.StopActiveSession()
-		} else {
-			err = sah.process.Stop()
-		}
+		err = sah.stopActiveServerEvent()
 		txt = "stopped"
 	case "restart":
 		if event.IsChampionship() && !event.IsPractice() {

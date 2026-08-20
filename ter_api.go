@@ -38,6 +38,7 @@ type TERCurrentEvent struct {
 	FuelRate         int `json:"fuelRate"`
 	DamageMultiplier int `json:"damageMultiplier"`
 	TyreWearRate     int `json:"tyreWearRate"`
+	LoopMode         int `json:"loopMode"`
 
 	ABSAllowed              int `json:"absAllowed"`
 	TractionControlAllowed  int `json:"tractionControlAllowed"`
@@ -345,6 +346,8 @@ func (h *HealthCheck) ServeTERCurrentEvent(
 				Cars: splitACList(cfg.Cars),
 
 				MaxClients: cfg.MaxClients,
+
+				LoopMode: cfg.LoopMode,
 
 				FuelRate: cfg.FuelRate,
 

@@ -79,13 +79,29 @@ func Router(
 	r.HandleFunc("/robots.txt", serverAdministrationHandler.robots)
 	r.Handle("/metrics", prometheusMonitoringHandler())
 	r.Get("/healthcheck.json", healthCheck.ServeHTTP)
-	r.Get("/api/ter/status", healthCheck.ServeTERStatus)
-	r.Get("/api/ter/cars", carsHandler.ServeTERCars)
-	r.Get("/api/ter/tracks", tracksHandler.ServeTERTracks)
-	r.Get(
-		"/api/ter/current-event",
-		healthCheck.ServeTERCurrentEvent,
-	)
+	r.Route("/api/ter", func(r chi.Router) {
+		r.Use(TERAPIAuthMiddleware)
+
+		r.Get(
+			"/status",
+			healthCheck.ServeTERStatus,
+		)
+
+		r.Get(
+			"/cars",
+			carsHandler.ServeTERCars,
+		)
+
+		r.Get(
+			"/tracks",
+			tracksHandler.ServeTERTracks,
+		)
+
+		r.Get(
+			"/current-event",
+			healthCheck.ServeTERCurrentEvent,
+		)
+	})
 
 	if Debug {
 		r.Mount("/debug/", middleware.Profiler())

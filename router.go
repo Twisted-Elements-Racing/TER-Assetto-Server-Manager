@@ -98,8 +98,18 @@ func Router(
 		)
 
 		r.Get(
+			"/events",
+			customRaceHandler.ServeTEREvents,
+		)
+
+		r.Get(
 			"/current-event",
 			healthCheck.ServeTERCurrentEvent,
+		)
+
+		r.Post(
+			"/start",
+			customRaceHandler.ServeTERStart,
 		)
 
 		r.Post(

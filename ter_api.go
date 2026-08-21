@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type TERStatusResponse struct {
@@ -57,6 +58,33 @@ type TERCurrentEvent struct {
 type TERCurrentEventResponse struct {
 	Running bool             `json:"running"`
 	Event   *TERCurrentEvent `json:"event,omitempty"`
+}
+
+type TERSessionStateResponse struct {
+	Running bool `json:"running"`
+	Ready   bool `json:"ready"`
+
+	SessionIndex        int `json:"sessionIndex"`
+	CurrentSessionIndex int `json:"currentSessionIndex"`
+	SessionCount        int `json:"sessionCount"`
+
+	Name string `json:"name"`
+	Type string `json:"type"`
+
+	Track       string `json:"track"`
+	TrackLayout string `json:"trackLayout"`
+
+	TimeMinutes int `json:"timeMinutes"`
+	Laps        int `json:"laps"`
+	WaitSeconds int `json:"waitSeconds"`
+
+	SessionStartedAt string `json:"sessionStartedAt,omitempty"`
+
+	ElapsedMilliseconds        int64 `json:"elapsedMilliseconds"`
+	AssettoElapsedMilliseconds int64 `json:"assettoElapsedMilliseconds"`
+
+	Timed            bool  `json:"timed"`
+	RemainingSeconds int64 `json:"remainingSeconds"`
 }
 
 type TERCar struct {
@@ -386,4 +414,90 @@ func (h *HealthCheck) ServeTERCurrentEvent(
 	)
 
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (h *HealthCheck) ServeTERSessionState(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	response := TERSessionStateResponse{
+		Running: h.process.IsRunning(),
+	}
+
+	if response.Running &&
+		!h.raceControl.SessionStartTime.IsZero() {
+
+		info := h.raceControl.SessionInfo
+
+		response.Ready = true
+
+		response.SessionIndex = int(info.SessionIndex)
+		response.CurrentSessionIndex = int(info.CurrentSessionIndex)
+		response.SessionCount = int(info.SessionCount)
+
+		response.Name = info.Name
+		response.Type = info.Type.String()
+
+		response.Track = info.Track
+
+		trackLayout := info.TrackConfig
+
+		if trackLayout == defaultLayoutName {
+			trackLayout = ""
+		}
+
+		response.TrackLayout = trackLayout
+
+		response.TimeMinutes = int(info.Time)
+		response.Laps = int(info.Laps)
+		response.WaitSeconds = int(info.WaitTime)
+
+		response.SessionStartedAt = h.raceControl.
+			SessionStartTime.
+			UTC().
+			Format(time.RFC3339Nano)
+
+		elapsed := time.Since(
+			h.raceControl.SessionStartTime,
+		).Milliseconds()
+
+		if elapsed < 0 {
+			elapsed = 0
+		}
+
+		response.ElapsedMilliseconds = elapsed
+
+		assettoElapsed := int64(
+			info.ElapsedMilliseconds,
+		)
+
+		if assettoElapsed < 0 {
+			assettoElapsed = 0
+		}
+
+		response.AssettoElapsedMilliseconds = assettoElapsed
+
+		if info.Time > 0 {
+			response.Timed = true
+
+			totalSeconds := int64(info.Time) * 60
+			elapsedSeconds := elapsed / 1000
+			remaining := totalSeconds - elapsedSeconds
+
+			if remaining < 0 {
+				remaining = 0
+			}
+
+			response.RemainingSeconds = remaining
+		}
+	}
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	_ = json.NewEncoder(w).Encode(
+		response,
+	)
 }

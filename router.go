@@ -107,6 +107,11 @@ func Router(
 			healthCheck.ServeTERCurrentEvent,
 		)
 
+		r.Get(
+			"/session-state",
+			healthCheck.ServeTERSessionState,
+		)
+
 		r.Post(
 			"/start",
 			customRaceHandler.ServeTERStart,

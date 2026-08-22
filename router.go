@@ -108,6 +108,21 @@ func Router(
 		)
 
 		r.Get(
+			"/events/{id}",
+			customRaceHandler.ServeTEREvent,
+		)
+
+		r.Put(
+			"/events/{id}",
+			customRaceHandler.ServeTERUpdateEvent,
+		)
+
+		r.Delete(
+			"/events/{id}",
+			customRaceHandler.ServeTERDeleteEvent,
+		)
+
+		r.Get(
 			"/current-event",
 			healthCheck.ServeTERCurrentEvent,
 		)

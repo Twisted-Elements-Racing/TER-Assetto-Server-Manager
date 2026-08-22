@@ -3,7 +3,9 @@ package servermanager
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -25,6 +27,58 @@ type TERStoredEvent struct {
 
 type TEREventsResponse struct {
 	Events []TERStoredEvent `json:"events"`
+}
+
+type TEREventSessionRequest struct {
+	Enabled     bool   `json:"enabled"`
+	Name        string `json:"name"`
+	TimeMinutes int    `json:"timeMinutes"`
+	Laps        int    `json:"laps"`
+	IsOpen      *int   `json:"isOpen"`
+	WaitSeconds int    `json:"waitSeconds"`
+}
+
+type TEREventAssistsRequest struct {
+	ABS              *int `json:"abs"`
+	TractionControl  *int `json:"tractionControl"`
+	StabilityControl *int `json:"stabilityControl"`
+	AutoClutch       *int `json:"autoClutch"`
+	TyreBlankets     *int `json:"tyreBlankets"`
+}
+
+type TEREventRealismRequest struct {
+	FuelRate           *int `json:"fuelRate"`
+	DamageMultiplier   *int `json:"damageMultiplier"`
+	TyreWearRate       *int `json:"tyreWearRate"`
+	ForceVirtualMirror *int `json:"forceVirtualMirror"`
+}
+
+type TERCreateEventRequest struct {
+	Name        string   `json:"name"`
+	Track       string   `json:"track"`
+	TrackLayout string   `json:"trackLayout"`
+	Cars        []string `json:"cars"`
+
+	MaxClients *int `json:"maxClients"`
+	LoopMode   *int `json:"loopMode"`
+
+	Practice TEREventSessionRequest `json:"practice"`
+	Qualify  TEREventSessionRequest `json:"qualify"`
+	Race     TEREventSessionRequest `json:"race"`
+	Booking  TEREventSessionRequest `json:"booking"`
+
+	Assists TEREventAssistsRequest `json:"assists"`
+	Realism TEREventRealismRequest `json:"realism"`
+
+	AllowedTyresOut         *int `json:"allowedTyresOut"`
+	MaxContactsPerKilometer *int `json:"maxContactsPerKilometer"`
+	StartRule               *int `json:"startRule"`
+	ResultScreenTime        *int `json:"resultScreenTime"`
+
+	OverridePassword     bool   `json:"overridePassword"`
+	ReplacementPassword  string `json:"replacementPassword"`
+	ForceStopTime        int    `json:"forceStopTime"`
+	ForceStopWithDrivers bool   `json:"forceStopWithDrivers"`
 }
 
 type TERStartRequest struct {
@@ -98,6 +152,402 @@ func terStoredEventFromCustomRace(
 
 		Sessions: sessions,
 	}
+}
+
+func applyTERSession(
+	cfg *CurrentRaceConfig,
+	sessionType SessionType,
+	request TEREventSessionRequest,
+) {
+	cfg.RemoveSession(sessionType)
+
+	if !request.Enabled {
+		return
+	}
+
+	name := strings.TrimSpace(request.Name)
+
+	if name == "" {
+		name = sessionType.String()
+	}
+
+	isOpen := SessionOpenness(1)
+
+	if request.IsOpen != nil {
+		isOpen = SessionOpenness(
+			*request.IsOpen,
+		)
+	}
+
+	cfg.AddSession(
+		sessionType,
+		&SessionConfig{
+			Name:     name,
+			Time:     request.TimeMinutes,
+			Laps:     request.Laps,
+			IsOpen:   isOpen,
+			WaitTime: request.WaitSeconds,
+		},
+	)
+}
+
+func (crh *CustomRaceHandler) buildTEROpenEntryList(
+	cars []string,
+	maxClients int,
+) (EntryList, error) {
+	allCars, err :=
+		crh.raceManager.carManager.ListCars()
+
+	if err != nil {
+		return nil, err
+	}
+
+	carMap := allCars.AsMap()
+	entryList := make(EntryList)
+
+	for i := 0; i < maxClients; i++ {
+		carID := strings.TrimSpace(
+			cars[i%len(cars)],
+		)
+
+		skins, ok := carMap[carID]
+
+		if !ok {
+			return nil, fmt.Errorf(
+				"unknown car: %s",
+				carID,
+			)
+		}
+
+		if len(skins) == 0 {
+			return nil, fmt.Errorf(
+				"car has no skins: %s",
+				carID,
+			)
+		}
+
+		entrant := NewEntrant()
+
+		entrant.Model = carID
+		entrant.Skin =
+			skins[i%len(skins)]
+
+		entryList.AddInPitBox(
+			entrant,
+			i,
+		)
+	}
+
+	return entryList, nil
+}
+
+func buildTERLegalTyres(
+	cars []string,
+) (string, error) {
+	tyres, err := ListTyres()
+
+	if err != nil {
+		return "", err
+	}
+
+	seen := make(map[string]bool)
+	var legalTyres []string
+
+	for _, carID := range cars {
+		carID = strings.TrimSpace(carID)
+
+		carTyres, ok := tyres[carID]
+
+		if !ok {
+			continue
+		}
+
+		for tyre := range carTyres {
+			if seen[tyre] {
+				continue
+			}
+
+			seen[tyre] = true
+			legalTyres = append(
+				legalTyres,
+				tyre,
+			)
+		}
+	}
+
+	sort.Strings(legalTyres)
+
+	return strings.Join(
+		legalTyres,
+		";",
+	), nil
+}
+
+func (crh *CustomRaceHandler) ServeTERCreateEvent(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	r.Body = http.MaxBytesReader(
+		w,
+		r.Body,
+		1024*1024,
+	)
+
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+
+	var request TERCreateEventRequest
+
+	if err := decoder.Decode(&request); err != nil {
+		writeTERJSON(
+			w,
+			http.StatusBadRequest,
+			TERControlErrorResponse{
+				OK:    false,
+				Error: "invalid request body",
+			},
+		)
+		return
+	}
+
+	request.Name = strings.TrimSpace(request.Name)
+	request.Track = strings.TrimSpace(request.Track)
+	request.TrackLayout = strings.TrimSpace(request.TrackLayout)
+
+	if request.Name == "" {
+		writeTERJSON(
+			w,
+			http.StatusBadRequest,
+			TERControlErrorResponse{
+				OK:    false,
+				Error: "name is required",
+			},
+		)
+		return
+	}
+
+	if request.Track == "" {
+		writeTERJSON(
+			w,
+			http.StatusBadRequest,
+			TERControlErrorResponse{
+				OK:    false,
+				Error: "track is required",
+			},
+		)
+		return
+	}
+
+	if len(request.Cars) == 0 {
+		writeTERJSON(
+			w,
+			http.StatusBadRequest,
+			TERControlErrorResponse{
+				OK:    false,
+				Error: "at least one car is required",
+			},
+		)
+		return
+	}
+
+	defaults := ConfigIniDefault()
+	cfg := defaults.CurrentRaceConfig
+	// TER-created races default Virtual Mirror to off.
+	cfg.ForceVirtualMirror = 0
+
+	cfg.Cars = strings.Join(request.Cars, ";")
+	cfg.Track = request.Track
+	cfg.TrackLayout = request.TrackLayout
+
+	legalTyres, err :=
+		buildTERLegalTyres(
+			request.Cars,
+		)
+
+	if err != nil {
+		logrus.WithError(err).Error(
+			"TER API could not determine legal tyres",
+		)
+
+		writeTERJSON(
+			w,
+			http.StatusInternalServerError,
+			TERControlErrorResponse{
+				OK:    false,
+				Error: "failed to determine legal tyres",
+			},
+		)
+		return
+	}
+
+	cfg.LegalTyres = legalTyres
+
+	if request.MaxClients != nil &&
+		*request.MaxClients > 0 {
+		cfg.MaxClients = *request.MaxClients
+	}
+
+	if request.LoopMode != nil {
+		cfg.LoopMode = *request.LoopMode
+	}
+
+	if request.Assists.ABS != nil {
+		cfg.ABSAllowed = FactoryAssist(
+			*request.Assists.ABS,
+		)
+	}
+
+	if request.Assists.TractionControl != nil {
+		cfg.TractionControlAllowed = FactoryAssist(
+			*request.Assists.TractionControl,
+		)
+	}
+
+	if request.Assists.StabilityControl != nil {
+		cfg.StabilityControlAllowed =
+			*request.Assists.StabilityControl
+	}
+
+	if request.Assists.AutoClutch != nil {
+		cfg.AutoClutchAllowed =
+			*request.Assists.AutoClutch
+	}
+
+	if request.Assists.TyreBlankets != nil {
+		cfg.TyreBlanketsAllowed =
+			*request.Assists.TyreBlankets
+	}
+
+	if request.Realism.FuelRate != nil {
+		cfg.FuelRate =
+			*request.Realism.FuelRate
+	}
+
+	if request.Realism.DamageMultiplier != nil {
+		cfg.DamageMultiplier =
+			*request.Realism.DamageMultiplier
+	}
+
+	if request.Realism.TyreWearRate != nil {
+		cfg.TyreWearRate =
+			*request.Realism.TyreWearRate
+	}
+
+	if request.Realism.ForceVirtualMirror != nil {
+		cfg.ForceVirtualMirror =
+			*request.Realism.ForceVirtualMirror
+	}
+
+	if request.AllowedTyresOut != nil {
+		cfg.AllowedTyresOut =
+			*request.AllowedTyresOut
+	}
+
+	if request.MaxContactsPerKilometer != nil {
+		cfg.MaxContactsPerKilometer =
+			*request.MaxContactsPerKilometer
+	}
+
+	if request.StartRule != nil {
+		cfg.StartRule =
+			StartRule(*request.StartRule)
+	}
+
+	if request.ResultScreenTime != nil {
+		cfg.ResultScreenTime =
+			*request.ResultScreenTime
+	}
+
+	applyTERSession(
+		&cfg,
+		SessionTypePractice,
+		request.Practice,
+	)
+
+	applyTERSession(
+		&cfg,
+		SessionTypeQualifying,
+		request.Qualify,
+	)
+
+	applyTERSession(
+		&cfg,
+		SessionTypeRace,
+		request.Race,
+	)
+
+	applyTERSession(
+		&cfg,
+		SessionTypeBooking,
+		request.Booking,
+	)
+
+	if len(cfg.Sessions) == 0 {
+		writeTERJSON(
+			w,
+			http.StatusBadRequest,
+			TERControlErrorResponse{
+				OK:    false,
+				Error: "at least one session must be enabled",
+			},
+		)
+		return
+	}
+
+	entryList, err :=
+		crh.buildTEROpenEntryList(
+			request.Cars,
+			cfg.MaxClients,
+		)
+
+	if err != nil {
+		logrus.WithError(err).Error(
+			"TER API could not build entry list",
+		)
+
+		writeTERJSON(
+			w,
+			http.StatusBadRequest,
+			TERControlErrorResponse{
+				OK:    false,
+				Error: "failed to build entry list",
+			},
+		)
+		return
+	}
+
+	race, err := crh.raceManager.SaveCustomRace(
+		request.Name,
+		request.OverridePassword,
+		request.ReplacementPassword,
+		cfg,
+		entryList,
+		false,
+		request.ForceStopTime,
+		request.ForceStopWithDrivers,
+	)
+
+	if err != nil {
+		logrus.WithError(err).Error(
+			"TER API could not create custom race",
+		)
+
+		writeTERJSON(
+			w,
+			http.StatusInternalServerError,
+			TERControlErrorResponse{
+				OK:    false,
+				Error: "failed to create event",
+			},
+		)
+		return
+	}
+
+	writeTERJSON(
+		w,
+		http.StatusCreated,
+		terStoredEventFromCustomRace(race),
+	)
 }
 
 func (crh *CustomRaceHandler) ServeTEREvents(

@@ -102,6 +102,11 @@ func Router(
 			customRaceHandler.ServeTEREvents,
 		)
 
+		r.Post(
+			"/events",
+			customRaceHandler.ServeTERCreateEvent,
+		)
+
 		r.Get(
 			"/current-event",
 			healthCheck.ServeTERCurrentEvent,
